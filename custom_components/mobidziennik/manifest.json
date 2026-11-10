@@ -1,6 +1,9 @@
 {
   "domain": "mobidziennik",
   "name": "mobiDziennik (unofficial)",
+  "categories": [
+    "productivity_information"
+  ],
   "codeowners": [
     "@formiification"
   ],
