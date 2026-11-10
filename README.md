@@ -59,34 +59,198 @@ Go to **Settings → Devices & services → Add integration → mobiDziennik (un
 
 Credentials are stored in Home Assistant's config entry, like in any other integration, and are only sent to your school's mobiDziennik address.
 
-## Dashboard example
+## Dashboard examples
 
-A simple per-child card using built-in cards only:
+You do not need to know YAML to use these. Each example is a ready-made card that you paste into your dashboard.
+
+### Step 1: find your child's entity prefix
+
+All entities of one student start with the same prefix, built from the student's name as shown in mobiDziennik. For example, **Kowalski Jan** becomes `sensor.kowalski_jan_…`.
+
+To check yours, open **Settings → Devices & services → Entities**, type `next lesson` in the search box, and look at the entity ID, e.g. `sensor.nowak_zofia_next_lesson`. The prefix is everything before `next_lesson`, here `nowak_zofia`.
+
+### Step 2: add a card
+
+1. Open your dashboard and click **✏️ Edit dashboard**. Choose **Take control** if Home Assistant asks.
+2. Click **+ Add card**, scroll down and choose **Manual**.
+3. Delete what is in the editor, paste one of the examples below and **replace every `kowalski_jan` with your prefix**. In most editors, *Ctrl + H* (find and replace) does it in one go.
+4. Click **Save**.
+
+The examples only use cards that come with Home Assistant, so nothing extra needs to be installed.
+
+---
+
+### 1. At a glance
+
+Six tiles with the most important information. Tap a tile to see the details.
 
 ```yaml
-type: vertical-stack
+type: grid
+columns: 2
+square: false
 cards:
-  - type: grid
-    columns: 2
-    square: false
-    cards:
-      - type: tile
-        entity: sensor.kowalski_jan_next_lesson
-      - type: tile
-        entity: sensor.kowalski_jan_today_lessons
-      - type: tile
-        entity: sensor.kowalski_jan_next_test
-      - type: tile
-        entity: sensor.kowalski_jan_homework
-  - type: markdown
-    content: >-
-      **Today** — {{ states('sensor.kowalski_jan_today_lessons') }}
-      {%- for l in state_attr('sensor.kowalski_jan_today_lessons', 'lessons') or [] %}
-      - {{ l }}
-      {%- endfor %}
+  - type: tile
+    entity: sensor.kowalski_jan_next_lesson
+    name: Next lesson
+  - type: tile
+    entity: sensor.kowalski_jan_today_lessons
+    name: Today
+  - type: tile
+    entity: sensor.kowalski_jan_next_test
+    name: Next test
+  - type: tile
+    entity: sensor.kowalski_jan_homework
+    name: Open homework
+  - type: tile
+    entity: sensor.kowalski_jan_latest_grade
+    name: Latest grade
+  - type: tile
+    entity: sensor.kowalski_jan_grades_last_7_days
+    name: Grades this week
 ```
 
-Entity IDs are derived from the student's name as shown in mobiDziennik (`Kowalski Jan` → `sensor.kowalski_jan_*`).
+> If your school publishes averages, you can swap the last tile for `sensor.kowalski_jan_average_grade`.
+
+### 2. Today's and the next school day's lessons
+
+A readable lesson plan with rooms. Substitutions are marked ⚠️ and days off are shown with the reason.
+
+```yaml
+type: markdown
+title: Lessons
+content: |-
+  {%- set p = 'kowalski_jan' -%}
+  {%- macro day(key, label) -%}
+  {%- set a = states[key].attributes if states[key] is defined else {} -%}
+  **{{ label }}{% if a.date %} · {{ as_datetime(a.date).strftime('%a %d.%m') }}{% endif %}** — {{ 'day off: ' ~ a.day_off if a.day_off else (a.start ~ '–' ~ a.end if a.lesson_count else 'no lessons') }}
+  {%- for l in a.lessons or [] %}
+  - {{ l | replace('zastępstwo', '⚠️ zastępstwo') }}
+  {%- endfor %}
+  {%- endmacro -%}
+  {{ day('sensor.' ~ p ~ '_today_lessons', 'Today') }}
+
+  {{ day('sensor.' ~ p ~ '_next_school_day', 'Next school day') }}
+```
+
+> Here the prefix appears only once, in the first line (`set p = 'kowalski_jan'`).
+
+### 3. Tests and homework
+
+All announced tests with their topics, and homework with the full assignment text. Homework that is already marked as done is crossed out.
+
+```yaml
+type: markdown
+title: Tests & homework
+content: |-
+  {%- set p = 'kowalski_jan' -%}
+  {%- set t = state_attr('sensor.' ~ p ~ '_next_test', 'upcoming') or [] -%}
+  {%- set h = state_attr('sensor.' ~ p ~ '_homework', 'items') or [] -%}
+  **📝 Upcoming tests** ({{ t | count }})
+  {%- for x in t %}
+  - {{ x }}
+  {%- else %}
+  - none announced
+  {%- endfor %}
+
+
+  **📚 Homework** ({{ states('sensor.' ~ p ~ '_homework') }} open)
+  {%- for x in h %}
+  - {{ ('~~' ~ x[2:] ~ '~~') if x.startswith('✔') else x }}
+  {%- else %}
+  - nothing due
+  {%- endfor %}
+```
+
+### 4. Grades: what's new this week
+
+Each grade is shown first and in bold, followed by the subject, date, category, weight and topic.
+
+```yaml
+type: markdown
+title: Grades
+content: |-
+  {%- set p = 'kowalski_jan' -%}
+  **Last 7 days** ({{ states('sensor.' ~ p ~ '_grades_last_7_days') }})
+  {%- for g in state_attr('sensor.' ~ p ~ '_grades_last_7_days', 'grades') or [] %}
+  - {{ g | regex_replace('^(\\d\\d\\.\\d\\d) ([^:]+): (\\S+)', '**\\3** · \\2 · \\1') }}
+  {%- else %}
+  - no new grades
+  {%- endfor %}
+```
+
+### 5. Subject averages with traffic lights
+
+Only for schools that publish averages (usually from grade 4 up). 🟢 means 4.5 or more, 🟡 means 3.5–4.49 and 🔴 means below 3.5. Change the numbers if you prefer different thresholds.
+
+```yaml
+type: markdown
+title: Averages
+content: |-
+  {%- set p = 'kowalski_jan' -%}
+  {%- set avg = 'sensor.' ~ p ~ '_average_grade' -%}
+  **Overall: {{ '%.2f' | format(states(avg) | float(0)) }}**
+
+  | Subject | Average |
+  |:--|--:|
+  {%- for s, v in (state_attr(avg, 'subjects') or {}).items() %}
+  | {{ s }} | {{ '🔴' if v < 3.5 else ('🟡' if v < 4.5 else '🟢') }} {{ '%.2f' | format(v) }} |
+  {%- endfor %}
+```
+
+### 6. Two children side by side
+
+With more than one child, putting their cards in a row keeps each child in their own column, so the information never gets mixed up. Use the same layout for every row: first child on the left, second on the right.
+
+```yaml
+type: horizontal-stack
+cards:
+  - type: tile
+    entity: sensor.kowalski_jan_today_lessons
+    name: Jan – today
+  - type: tile
+    entity: sensor.kowalski_ola_today_lessons
+    name: Ola – today
+```
+
+> **Tip:** you can put any of the examples above inside a `horizontal-stack` in the same way, for example two "Lessons" cards next to each other. Each card can also be shown only to selected users: in the card editor open the **Visibility** tab and choose **User**.
+
+### 7. Unread messages badge
+
+Add this as a **badge** at the top of a view (**Edit dashboard → + Add badge → Manual**). Tapping it opens the inbox in mobiDziennik. Replace `myschool` with your school's subdomain.
+
+```yaml
+type: entity
+entity: sensor.mobidziennik_unread_messages
+name: Unread messages
+show_name: true
+tap_action:
+  action: url
+  url_path: https://myschool.mobidziennik.pl/dziennik/wiadomosci
+```
+
+### Bonus: a phone notification for every new grade
+
+Go to **Settings → Automations & scenes → + Create automation → ⋮ → Edit in YAML**, paste the code below, replace `kowalski_jan` and `notify.mobile_app_my_phone` with your own (your phone's notify action is listed under **Developer tools → Actions** when you type `notify.mobile_app`), then save.
+
+```yaml
+alias: New grade for Jan
+triggers:
+  - trigger: state
+    entity_id: sensor.kowalski_jan_latest_grade
+    not_from: ["unknown", "unavailable"]
+    not_to: ["unknown", "unavailable"]
+actions:
+  - action: notify.mobile_app_my_phone
+    data:
+      title: "New grade: {{ trigger.to_state.attributes.grade }}"
+      message: >-
+        {{ trigger.to_state.attributes.subject }}
+        {%- if trigger.to_state.attributes.category %} ({{ trigger.to_state.attributes.category }}){% endif %}
+        {%- if trigger.to_state.attributes.topic %} – {{ trigger.to_state.attributes.topic }}{% endif %}
+mode: queued
+```
+
+> New data arrives roughly once an hour on school days (see [Being a good citizen](#being-a-good-citizen)), so notifications are not instant.
 
 ## Limitations
 
