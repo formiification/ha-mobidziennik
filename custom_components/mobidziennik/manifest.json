@@ -1,0 +1,17 @@
+{
+  "domain": "mobidziennik",
+  "name": "mobiDziennik (unofficial)",
+  "codeowners": [
+    "@formiification"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/formiification/ha-mobidziennik",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/formiification/ha-mobidziennik/issues",
+  "requirements": [
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.0.0"
+  ],
+  "version": "0.2.0"
+}

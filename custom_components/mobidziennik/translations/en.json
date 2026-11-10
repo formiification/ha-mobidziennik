@@ -1,0 +1,54 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect mobiDziennik",
+        "description": "School subdomain hint: {school_id_hint}",
+        "data": {
+          "school_id": "School subdomain",
+          "email": "Email / login",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Could not reach mobiDziennik.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This account is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "next_lesson": {
+        "name": "Next lesson"
+      },
+      "today_lessons": {
+        "name": "Today's lessons"
+      },
+      "next_school_day": {
+        "name": "Next school day"
+      },
+      "last_grade": {
+        "name": "Latest grade"
+      },
+      "recent_grades": {
+        "name": "Grades (last 7 days)"
+      },
+      "average": {
+        "name": "Average grade"
+      },
+      "next_test": {
+        "name": "Next test"
+      },
+      "homework": {
+        "name": "Homework"
+      },
+      "unread_messages": {
+        "name": "Unread messages"
+      }
+    }
+  }
+}

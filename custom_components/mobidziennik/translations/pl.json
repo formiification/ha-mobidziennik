@@ -1,0 +1,54 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Połącz mobiDziennik",
+        "description": "Subdomena szkoły: {school_id_hint}",
+        "data": {
+          "school_id": "Subdomena szkoły",
+          "email": "E-mail / login",
+          "password": "Hasło"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Nieprawidłowy e-mail lub hasło.",
+      "cannot_connect": "Nie udało się połączyć z mobiDziennikiem.",
+      "unknown": "Nieoczekiwany błąd."
+    },
+    "abort": {
+      "already_configured": "To konto jest już skonfigurowane."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "next_lesson": {
+        "name": "Następna lekcja"
+      },
+      "today_lessons": {
+        "name": "Lekcje dzisiaj"
+      },
+      "next_school_day": {
+        "name": "Następny dzień szkolny"
+      },
+      "last_grade": {
+        "name": "Ostatnia ocena"
+      },
+      "recent_grades": {
+        "name": "Oceny (ostatnie 7 dni)"
+      },
+      "average": {
+        "name": "Średnia ocen"
+      },
+      "next_test": {
+        "name": "Najbliższy sprawdzian"
+      },
+      "homework": {
+        "name": "Zadania domowe"
+      },
+      "unread_messages": {
+        "name": "Nieprzeczytane wiadomości"
+      }
+    }
+  }
+}
