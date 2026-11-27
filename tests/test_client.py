@@ -1,6 +1,4 @@
 """Session handling: the auto-logout page must trigger a fresh login."""
-import asyncio
-
 import pytest
 
 from mdz_loader import api
@@ -39,27 +37,27 @@ class FakeSession:
         return _Resp(url.replace("/dziennik", "/dziennik/historia"), "<div id='content'>wyloguj</div>")
 
 
-def test_relogin_after_auto_logout(fixture_html):
+async def test_relogin_after_auto_logout(fixture_html):
     good = "<div id='content'>ok</div>"
     session = FakeSession([
         ("https://s.mobidziennik.pl/helper/autowylogowanie", fixture_html("autowylogowanie.html")),
         ("https://s.mobidziennik.pl/dziennik/oceny/", good),
     ])
     client = api.MobiDziennikClient(session, "s", "u", "p")
-    html = asyncio.run(client._get("/dziennik/oceny/"))
+    html = await client._get("/dziennik/oceny/")
     assert html == good
     assert session.logins == 2  # initial login + re-login after takeover
 
 
-def test_still_logged_out_raises(fixture_html):
+async def test_still_logged_out_raises(fixture_html):
     page = ("https://s.mobidziennik.pl/helper/autowylogowanie", fixture_html("autowylogowanie.html"))
     client = api.MobiDziennikClient(FakeSession([page, page]), "s", "u", "p")
     with pytest.raises(api.MobiDziennikAuthError):
-        asyncio.run(client._get("/dziennik/oceny/"))
+        await client._get("/dziennik/oceny/")
 
 
-def test_refuses_state_changing_url():
+async def test_refuses_state_changing_url():
     client = api.MobiDziennikClient(FakeSession([]), "s", "u", "p")
     client._logged_in = True
     with pytest.raises(api.MobiDziennikError):
-        asyncio.run(client._get("/dziennik/zmien_status_zrobienia?id=1"))
+        await client._get("/dziennik/zmien_status_zrobienia?id=1")
