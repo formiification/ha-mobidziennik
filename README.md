@@ -4,6 +4,9 @@
 
 # mobiDziennik for Home Assistant (unofficial)
 
+[![Validate](https://github.com/formiification/ha-mobidziennik/actions/workflows/validate.yml/badge.svg)](https://github.com/formiification/ha-mobidziennik/actions/workflows/validate.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A custom [Home Assistant](https://www.home-assistant.io/) integration that brings data from the Polish school e-register **mobiDziennik** into Home Assistant: timetable (with substitutions and days off), grades and averages, announced tests, homework and unread messages. It supports parent accounts with several children.
 
 > [!IMPORTANT]
@@ -45,11 +48,20 @@ Please do not shorten these intervals.
 
 ## Installation
 
-### HACS (custom repository)
+### Marketplace (one click)
 
-1. In HACS, open **⋮ → Custom repositories**.
+[![Open your Home Assistant instance and open this repository in the Marketplace.](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=formiification&repository=ha-mobidziennik&category=integration)
+
+The button opens this repository in **Settings → Marketplace** (Home Assistant 2026.11 and newer) and offers to add it. Click **Download**, then restart Home Assistant.
+
+<details>
+<summary>By hand, or with HACS on Home Assistant older than 2026.11</summary>
+
+1. Open **Marketplace** (or **HACS**) → **⋮ → Custom repositories**.
 2. Add `https://github.com/formiification/ha-mobidziennik` with the category **Integration**.
-3. Install **mobiDziennik (unofficial)** and restart Home Assistant.
+3. Download **mobiDziennik (unofficial)** and restart Home Assistant.
+
+</details>
 
 ### Manual
 
@@ -57,7 +69,9 @@ Copy `custom_components/mobidziennik` into your `<config>/custom_components/` di
 
 ## Configuration
 
-Go to **Settings → Devices & services → Add integration → mobiDziennik (unofficial)** and enter:
+[![Open your Home Assistant instance and start setting up mobiDziennik.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=mobidziennik)
+
+Click the button (after installing and restarting), or go to **Settings → Devices & services → Add integration → mobiDziennik (unofficial)**, and enter:
 
 * **School subdomain**: the part before `.mobidziennik.pl`. For example, for `https://myschool.mobidziennik.pl` enter `myschool`.
 * **Login / e-mail** and **password**: your parent account credentials.
