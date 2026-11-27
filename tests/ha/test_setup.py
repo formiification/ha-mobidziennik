@@ -74,3 +74,27 @@ async def test_setup_and_events(hass: HomeAssistant) -> None:
     items = resp["calendar.kowalski_jan_class_calendar"]["events"]
     assert [e["summary"] for e in items] == ["Test: Ułamki", "Day off: Przerwa świąteczna"]
     assert items[1]["end"] == (TODAY + timedelta(days=33)).isoformat()
+
+
+async def test_polish_system_keeps_english_ids_and_polish_texts(hass: HomeAssistant) -> None:
+    await hass.config.async_update(language="pl")
+    snap = _snapshot()
+    student = snap.students["Kowalski Jan"]
+    student.lessons = [api.Lesson(TODAY + timedelta(days=3), None, None, "matematyka", None, "Nowak Ewa", "10")]
+    student.days_off = {TODAY: "Dzień Edukacji"}
+    entry = MockConfigEntry(domain=DOMAIN, data={"school_id": "s", "email": "u", "password": "p"}, unique_id="s_u")
+    entry.add_to_hass(hass)
+    with patch.object(api.MobiDziennikClient, "async_get_all", return_value=snap):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    # ids do not follow the Polish entity names
+    assert hass.states.get("sensor.kowalski_jan_next_test").state == "Brak"
+    assert hass.states.get("sensor.kowalski_jan_today_lessons").state.startswith("Dzień wolny – ")
+    assert hass.states.get("sensor.kowalski_jan_unread_messages") is None
+    assert hass.states.get("sensor.mobidziennik_unread_messages") is not None
+    unexcused = hass.states.get("sensor.kowalski_jan_unexcused_absences")
+    assert unexcused.attributes["days"][0].startswith(("pon.", "wt.", "śr.", "czw.", "pt.", "sob.", "niedz."))
+    assert "2 nieuspr." in unexcused.attributes["days"][0]
+    cal = hass.states.get("calendar.kowalski_jan_class_calendar")
+    assert cal.attributes["message"] == "Sprawdzian: Ułamki"

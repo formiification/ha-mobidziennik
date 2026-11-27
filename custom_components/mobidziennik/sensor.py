@@ -21,10 +21,10 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .api import AbsenceDay, Grade, Lesson, Remark, StudentData, slugify_name
-from .const import DOMAIN, RECENT_GRADES_DAYS
+from . import texts
+from .const import DOMAIN, OBJECT_IDS, RECENT_GRADES_DAYS
 from .coordinator import MobiDziennikCoordinator
 
-WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 MAX_STATE = 255
 
 
@@ -39,7 +39,7 @@ def _d(day: date) -> str:
 
 def _wd(day: date) -> str:
     """Thu 12.11"""
-    return f"{WEEKDAYS[day.weekday()]} {_d(day)}"
+    return f"{texts.current().weekdays[day.weekday()]} {_d(day)}"
 
 
 def _t(value) -> str:
@@ -53,9 +53,9 @@ def _cut(text: str, limit: int = MAX_STATE) -> str:
 def _lesson_line(lesson: Lesson) -> str:
     line = f"{_t(lesson.start)}–{_t(lesson.end)} {lesson.subject}"
     if lesson.room:
-        line += f" (s. {lesson.room})" if lesson.room[:1].isdigit() else f" ({lesson.room})"
+        line += texts.current().room.format(room=lesson.room) if lesson.room[:1].isdigit() else f" ({lesson.room})"
     if lesson.is_substitution:
-        line += f" – zastępstwo: {lesson.teacher or '?'}"
+        line += texts.current().substitution.format(teacher=lesson.teacher or "?")
     return line
 
 
@@ -65,10 +65,10 @@ def _lessons_on(student: StudentData, day: date) -> list[Lesson]:
 
 def _day_summary(student: StudentData, day: date) -> str:
     if day in student.days_off:
-        return f"Day off – {student.days_off[day]}"
+        return texts.current().day_off.format(reason=student.days_off[day])
     lessons = _lessons_on(student, day)
     if not lessons:
-        return "No lessons"
+        return texts.current().no_lessons
     return f"{_t(lessons[0].start)}–{_t(lessons[-1].end)} ({len(lessons)})"
 
 
@@ -97,7 +97,7 @@ def _sorted_grades(student: StudentData) -> list[Grade]:
 
 def _grade_line(grade: Grade) -> str:
     when = grade.entered_at.strftime("%d.%m") if grade.entered_at else "?"
-    details = [x for x in (grade.category, f"waga {grade.weight}" if grade.weight else None) if x]
+    details = [x for x in (grade.category, texts.current().weight.format(weight=grade.weight) if grade.weight else None) if x]
     line = f"{when} {grade.subject}: {grade.symbol}"
     if details:
         line += f" ({', '.join(details)})"
@@ -239,7 +239,7 @@ def _upcoming_tests(student: StudentData):
 def _next_test_value(student: StudentData) -> str:
     tests = _upcoming_tests(student)
     if not tests:
-        return "None"
+        return texts.current().no_test
     t = tests[0]
     kind = f" ({t.kind})" if t.kind else ""
     return _cut(f"{_wd(t.day)} {t.subject}{kind}")
@@ -292,7 +292,8 @@ def _homework_attrs(student: StudentData) -> dict[str, Any]:
 
 def _absence_line(day: AbsenceDay) -> str:
     subjects = ", ".join(dict.fromkeys(l.subject for l in day.lessons)) or "?"
-    status = f"{day.unexcused} nieuspr." if day.unexcused else "uspr."
+    t = texts.current()
+    status = t.unexcused.format(count=day.unexcused) if day.unexcused else t.excused
     return f"{_wd(day.day)}: {day.total} ({status}) – {subjects}"
 
 
@@ -460,6 +461,8 @@ class StudentSensor(_Base):
         self._attr_state_class = spec.state_class
         self._attr_unique_id = f"{entry.entry_id}_{slugify_name(student_name)}_{spec.key}"
         self._attr_device_info = self._device(student_name)
+        # Only used for new entities; existing ones keep their registry id.
+        self.entity_id = f"sensor.{slugify_name(student_name)}_{OBJECT_IDS.get(spec.key, spec.key)}"
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -484,12 +487,14 @@ class StudentSensor(_Base):
 
     @property
     def native_value(self):
+        texts.set_language(self.hass.config.language if self.hass else None)
         return self._spec.value(self._student)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         if self._spec.attrs is None:
             return None
+        texts.set_language(self.hass.config.language if self.hass else None)
         return self._spec.attrs(self._student)
 
 
@@ -504,6 +509,7 @@ class UnreadMessagesSensor(_Base):
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_unread_messages"
         self._attr_device_info = self._device(None)
+        self.entity_id = "sensor.mobidziennik_unread_messages"
 
     @property
     def native_value(self) -> int:

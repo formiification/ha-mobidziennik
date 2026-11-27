@@ -17,24 +17,14 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .api import CalendarItem, StudentData, slugify_name
-from .const import DOMAIN
+from . import texts
+from .const import DOMAIN, OBJECT_IDS
 from .coordinator import MobiDziennikCoordinator
 
-KIND_LABELS = {
-    "test": "Test",
-    "quiz": "Quiz",
-    "trip": "Trip",
-    "event": "Event",
-    "info": "Info",
-    "duty": "Duty",
-    "own": "Note",
-    "school": "School",
-    "day_off": "Day off",
-}
 
 
 def _to_event(item: CalendarItem) -> CalendarEvent:
-    label = KIND_LABELS.get(item.kind, item.kind)
+    label = texts.current().calendar_kinds.get(item.kind, item.kind)
     return CalendarEvent(
         start=item.start,
         end=item.end + timedelta(days=1),  # HA all-day end is exclusive
@@ -67,6 +57,7 @@ class ClassCalendar(CoordinatorEntity[MobiDziennikCoordinator], CalendarEntity):
         self._student_name = student_name
         school_id = entry.data.get("school_id", "mobidziennik")
         self._attr_unique_id = f"{entry.entry_id}_{slugify_name(student_name)}_class_calendar"
+        self.entity_id = f"calendar.{slugify_name(student_name)}_{OBJECT_IDS['class_calendar']}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{school_id}_{slugify_name(student_name)}")},
             name=student_name,
@@ -90,6 +81,7 @@ class ClassCalendar(CoordinatorEntity[MobiDziennikCoordinator], CalendarEntity):
         student = self._student
         if student is None:
             return None
+        texts.set_language(self.hass.config.language)
         today = dt_util.now().date()
         for item in student.calendar:
             if item.end >= today:
@@ -102,6 +94,7 @@ class ClassCalendar(CoordinatorEntity[MobiDziennikCoordinator], CalendarEntity):
         student = self._student
         if student is None:
             return []
+        texts.set_language(hass.config.language)
         first: date = dt_util.as_local(start_date).date()
         last: date = dt_util.as_local(end_date).date()
         return [

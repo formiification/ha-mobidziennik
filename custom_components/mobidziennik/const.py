@@ -50,3 +50,23 @@ AUTO_LOGOUT_MARKERS = (
 
 # How many days back the "recent grades" sensor looks.
 RECENT_GRADES_DAYS = 7
+
+# Language-independent object ids. Home Assistant would otherwise build
+# entity ids from the translated name (e.g. "..._nastepna_lekcja" on a
+# Polish system), which breaks copy-paste examples. Keys are translation
+# keys; values keep the ids used since v0.2.
+OBJECT_IDS = {
+    "next_lesson": "next_lesson",
+    "today_lessons": "today_lessons",
+    "next_school_day": "next_school_day",
+    "last_grade": "latest_grade",
+    "recent_grades": "grades_last_7_days",
+    "average": "average_grade",
+    "next_test": "next_test",
+    "homework": "homework",
+    "attendance": "attendance",
+    "unexcused_absences": "unexcused_absences",
+    "behaviour_points": "behaviour_points",
+    "last_remark": "latest_remark",
+    "class_calendar": "class_calendar",
+}
