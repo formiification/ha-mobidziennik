@@ -48,6 +48,23 @@
       },
       "unread_messages": {
         "name": "Nieprzeczytane wiadomości"
+      },
+      "attendance": {
+        "name": "Frekwencja"
+      },
+      "unexcused_absences": {
+        "name": "Nieusprawiedliwione nieobecności"
+      },
+      "behaviour_points": {
+        "name": "Punkty z zachowania"
+      },
+      "last_remark": {
+        "name": "Ostatnia uwaga"
+      }
+    },
+    "calendar": {
+      "class_calendar": {
+        "name": "Kalendarz klasowy"
       }
     }
   }

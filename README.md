@@ -23,6 +23,11 @@ One device is created per student, plus one for the parent account.
 | Average grade | `4.64` | per-subject weighted averages *(only when the school publishes averages)* |
 | Next test | `Thu 12.11 język angielski (sprawdzian)` | days until, topic, list of upcoming tests |
 | Homework | `2` (open items) | due date, subject, full content, done flag |
+| Attendance | `97.1` % | present, excused / unexcused absences, late, released, recent absence days |
+| Unexcused absences | `4` (lessons) | days with unexcused absences, oldest one |
+| Behaviour points | `68` | behaviour grade, term, predicted/final behaviour grades *(only for point-based schools)* |
+| Latest remark | `+10 konkurs plastyczny` | kind, category, teacher, entered, positive/negative/neutral counts, last 10 remarks |
+| Class calendar *(calendar entity)* | next entry | announced tests and quizzes, class events, trips, things to bring, school days off |
 | Unread messages *(account)* | `4` | sender, date and subject of unread messages |
 
 Time-dependent states (next lesson, today) are re-evaluated every minute locally, without contacting the website.
@@ -33,8 +38,8 @@ Because this scrapes a website that does not offer an API, the integration delib
 
 * **Irregular, infrequent polling.** It polls every 45–75 minutes (randomised every cycle) on school days between 06:00 and 21:00, and every 2.5–3.5 hours at night and at weekends.
 * **No bursts.** It waits a random 1–4 s between page loads within one refresh.
-* **Minimal requests.** Next week's timetable is only fetched when the current week has no lessons left, and homework details are fetched once per assignment and then cached.
-* **Strictly read-only.** It never opens individual messages, so they are not marked as read, and it never changes homework status.
+* **Minimal requests.** Next week's timetable is only fetched when the current week has no lessons left, and homework details are fetched once per assignment and then cached. Attendance, behaviour and the class calendar change rarely and are fetched at most every 4 hours.
+* **Strictly read-only.** It never opens individual messages, so they are not marked as read, it never changes homework status and it never sends absence excuses.
 
 Please do not shorten these intervals.
 
@@ -252,11 +257,39 @@ mode: queued
 
 > New data arrives roughly once an hour on school days (see [Being a good citizen](#being-a-good-citizen)), so notifications are not instant.
 
+### Events for automations
+
+On every refresh the integration compares the new data with the previous one and fires an event for each new item:
+
+| Event | Data |
+|---|---|
+| `mobidziennik_new_grade` | `student`, `subject`, `grade`, `category`, `topic`, `weight`, `teacher`, `entered` |
+| `mobidziennik_new_remark` | `student`, `kind` (`positive` / `negative` / `neutral`), `points`, `text`, `category`, `teacher`, `entered` |
+| `mobidziennik_new_absence` | `student`, `date`, `time`, `subject`, `teacher`, `excused` |
+
+Nothing is fired for data that was already there when Home Assistant started.
+
+```yaml
+alias: Negative remark for Jan
+triggers:
+  - trigger: event
+    event_type: mobidziennik_new_remark
+    event_data:
+      student: Kowalski Jan
+      kind: negative
+actions:
+  - action: notify.mobile_app_my_phone
+    data:
+      title: "Remark ({{ trigger.event.data.points }})"
+      message: "{{ trigger.event.data.text }} – {{ trigger.event.data.teacher }}"
+```
+
 ## Limitations
 
 * It was tested with a primary school using both descriptive (early years) and numeric grades. Other schools may use page variants that are not handled yet. Issues with an **anonymised** HTML snippet are welcome.
 * Only the first page of the inbox (the 20 most recent messages) is checked for unread messages.
-* Attendance and behaviour notes are not supported yet.
+* **One session per account.** mobiDziennik allows only one active login per account. Each refresh logs in again if needed, which ends a session open in a browser on the same account (and vice versa). Using a separate parent account for Home Assistant avoids this.
+* Payments, files, announcements ("komunikaty") and predicted term grades are not supported yet.
 
 ## Troubleshooting
 

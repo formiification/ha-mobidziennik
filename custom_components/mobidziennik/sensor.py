@@ -20,7 +20,7 @@ from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .api import Grade, Lesson, StudentData, slugify_name
+from .api import AbsenceDay, Grade, Lesson, Remark, StudentData, slugify_name
 from .const import DOMAIN, RECENT_GRADES_DAYS
 from .coordinator import MobiDziennikCoordinator
 
@@ -285,6 +285,86 @@ def _homework_attrs(student: StudentData) -> dict[str, Any]:
     }
 
 
+
+# ----------------------------------------------------------------------
+# Attendance / behaviour (v0.3)
+# ----------------------------------------------------------------------
+
+def _absence_line(day: AbsenceDay) -> str:
+    subjects = ", ".join(dict.fromkeys(l.subject for l in day.lessons)) or "?"
+    status = f"{day.unexcused} nieuspr." if day.unexcused else "uspr."
+    return f"{_wd(day.day)}: {day.total} ({status}) – {subjects}"
+
+
+def _attendance_value(student: StudentData) -> float | None:
+    return student.attendance.percent if student.attendance else None
+
+
+def _attendance_attrs(student: StudentData) -> dict[str, Any]:
+    a = student.attendance
+    return {
+        "present": a.present if a else None,
+        "absent_excused": a.excused if a else None,
+        "absent_unexcused": a.unexcused if a else None,
+        "late": a.late if a else None,
+        "released": a.released if a else None,
+        "recent_absences": [_absence_line(d) for d in student.absences[:5]],
+    }
+
+
+def _unexcused_value(student: StudentData) -> int:
+    return sum(d.unexcused for d in student.absences)
+
+
+def _unexcused_attrs(student: StudentData) -> dict[str, Any]:
+    pending = [d for d in student.absences if d.unexcused]
+    return {
+        "days": [_absence_line(d) for d in pending],
+        "oldest": pending[-1].day.isoformat() if pending else None,
+    }
+
+
+def _remark_line(remark: Remark) -> str:
+    when = remark.entered_at.strftime("%d.%m") if remark.entered_at else "?"
+    pts = f"{remark.points:+d} " if remark.points is not None else ""
+    sign = {"positive": "➕", "negative": "➖"}.get(remark.kind, "•")
+    return _cut(f"{when} {sign} {pts}{remark.text}", 200)
+
+
+def _behaviour_points_attrs(student: StudentData) -> dict[str, Any]:
+    b = student.behaviour
+    return {
+        "grade": b.grade if b else None,
+        "term": b.term if b else None,
+        "final_grades": b.final_grades if b else {},
+    }
+
+
+def _last_remark_value(student: StudentData) -> str | None:
+    b = student.behaviour
+    if not b or not b.remarks:
+        return None
+    r = b.remarks[0]
+    pts = f"{r.points:+d} " if r.points is not None else ""
+    return _cut(f"{pts}{r.text}")
+
+
+def _last_remark_attrs(student: StudentData) -> dict[str, Any]:
+    b = student.behaviour
+    remarks = b.remarks if b else []
+    last = remarks[0] if remarks else None
+    return {
+        "kind": last.kind if last else None,
+        "category": last.category if last else None,
+        "teacher": last.teacher if last else None,
+        "entered": last.entered_at.isoformat() if last and last.entered_at else None,
+        "positive": sum(1 for r in remarks if r.kind == "positive"),
+        "negative": sum(1 for r in remarks if r.kind == "negative"),
+        "neutral": sum(1 for r in remarks if r.kind == "neutral"),
+        "recent": [_remark_line(r) for r in remarks[:10]],
+    }
+
+
 STUDENT_SENSORS: tuple[StudentSensorSpec, ...] = (
     StudentSensorSpec("next_lesson", "mdi:clock-outline", _next_lesson_value, _next_lesson_attrs),
     StudentSensorSpec("today_lessons", "mdi:timetable", _today_value, _today_attrs),
@@ -303,6 +383,25 @@ STUDENT_SENSORS: tuple[StudentSensorSpec, ...] = (
     StudentSensorSpec(
         "homework", "mdi:notebook-edit-outline", lambda s: len(_open_homework(s)), _homework_attrs,
         state_class=SensorStateClass.MEASUREMENT,
+    ),
+    StudentSensorSpec(
+        "attendance", "mdi:account-check-outline", _attendance_value, _attendance_attrs,
+        unit="%", state_class=SensorStateClass.MEASUREMENT,
+        available_if=lambda s: s.attendance is not None,
+    ),
+    StudentSensorSpec(
+        "unexcused_absences", "mdi:account-alert-outline", _unexcused_value, _unexcused_attrs,
+        state_class=SensorStateClass.MEASUREMENT,
+        available_if=lambda s: s.attendance is not None,
+    ),
+    StudentSensorSpec(
+        "behaviour_points", "mdi:star-circle-outline", lambda s: s.behaviour.points if s.behaviour else None,
+        _behaviour_points_attrs, state_class=SensorStateClass.MEASUREMENT,
+        available_if=lambda s: s.behaviour is not None and s.behaviour.points is not None,
+    ),
+    StudentSensorSpec(
+        "last_remark", "mdi:message-badge-outline", _last_remark_value, _last_remark_attrs,
+        available_if=lambda s: s.behaviour is not None,
     ),
 )
 

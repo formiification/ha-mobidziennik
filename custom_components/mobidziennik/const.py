@@ -17,6 +17,18 @@ MESSAGES_PATH = "/dziennik/wiadomosci/"
 TESTS_PATH = "/dziennik/sprawdziany"
 HOMEWORK_PATH = "/dziennik/zadaniadomowe"
 HOMEWORK_DETAIL_PATH = "/dziennik/wyslijzadanie/"
+ATTENDANCE_PATH = "/dziennik/obecnosci"
+BEHAVIOUR_PATH = "/dziennik/zachowanie"
+CALENDAR_PATH = "/dziennik/kalendarzklasowy"
+
+# Attendance, behaviour and the class calendar change rarely: fetch them
+# at most this often (on top of the normal randomised polling).
+SLOW_REFRESH = timedelta(hours=4)
+
+# HA bus events fired when the coordinator sees new items.
+EVENT_NEW_GRADE = "mobidziennik_new_grade"
+EVENT_NEW_REMARK = "mobidziennik_new_remark"
+EVENT_NEW_ABSENCE = "mobidziennik_new_absence"
 
 # Text fragments mobiDziennik returns when the session is not authenticated
 # or credentials were rejected. Reverse engineered from the live HTML -

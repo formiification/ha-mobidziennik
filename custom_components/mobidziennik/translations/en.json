@@ -48,6 +48,23 @@
       },
       "unread_messages": {
         "name": "Unread messages"
+      },
+      "attendance": {
+        "name": "Attendance"
+      },
+      "unexcused_absences": {
+        "name": "Unexcused absences"
+      },
+      "behaviour_points": {
+        "name": "Behaviour points"
+      },
+      "last_remark": {
+        "name": "Latest remark"
+      }
+    },
+    "calendar": {
+      "class_calendar": {
+        "name": "Class calendar"
       }
     }
   }

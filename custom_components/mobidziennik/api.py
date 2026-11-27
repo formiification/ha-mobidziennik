@@ -15,9 +15,12 @@ than a documented API, it can break if the site's markup changes.
 from __future__ import annotations
 
 import asyncio
+import html as html_lib
+import json
 import logging
 import random
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, time as dt_time, timedelta
 
@@ -25,15 +28,19 @@ import aiohttp
 from bs4 import BeautifulSoup, Tag
 
 from .const import (
+    ATTENDANCE_PATH,
     AUTO_LOGOUT_MARKERS,
     AUTO_LOGOUT_PATH,
     BASE_URL_TEMPLATE,
+    BEHAVIOUR_PATH,
+    CALENDAR_PATH,
     GRADES_PATH,
     HOMEWORK_DETAIL_PATH,
     HOMEWORK_PATH,
     LOGIN_FAILURE_MARKERS,
     LOGIN_PATH,
     MESSAGES_PATH,
+    SLOW_REFRESH,
     TESTS_PATH,
     TIMETABLE_PATH,
 )
@@ -138,6 +145,22 @@ def _to_float(text: str | None) -> float | None:
         return None
 
 
+def _iso_date(value: object) -> date | None:
+    """"2026-12-21" or "2026-12-21T10:00:00" -> date."""
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _cut_text(text: str | None, limit: int) -> str | None:
+    if text is None:
+        return None
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 class MobiDziennikError(Exception):
     """Base error for the mobiDziennik client."""
 
@@ -223,6 +246,78 @@ class Message:
 
 
 @dataclass
+class AbsenceLesson:
+    """One lesson missed on a given day."""
+
+    time: str | None  # "07:05 - 07:50"
+    subject: str
+    teacher: str | None
+    excused: bool | None  # None when the status icon is unknown
+
+
+@dataclass
+class AbsenceDay:
+    """A day with at least one absence."""
+
+    day: date
+    total: int
+    unexcused: int
+    excused: int
+    lessons: list[AbsenceLesson] = field(default_factory=list)
+
+
+@dataclass
+class AttendanceStats:
+    """Whole-year counters from the "Statystyka obecności" box."""
+
+    present: int = 0
+    unexcused: int = 0
+    excused: int = 0
+    late: int = 0
+    released: int = 0  # "zwolnienie" (let off a lesson)
+
+    @property
+    def percent(self) -> float | None:
+        total = self.present + self.unexcused + self.excused
+        return round(100 * self.present / total, 1) if total else None
+
+
+@dataclass
+class Remark:
+    """A behaviour note ("uwaga")."""
+
+    text: str
+    kind: str  # "positive" | "negative" | "neutral"
+    points: int | None
+    category: str | None
+    entered_at: datetime | None
+    teacher: str | None
+
+
+@dataclass
+class Behaviour:
+    """Behaviour summary plus the list of remarks."""
+
+    points: int | None = None  # current term "suma punktów" (point-based schools)
+    grade: str | None = None  # e.g. "poprawne"
+    term: str | None = None  # "I" / "II"
+    final_grades: dict[str, str] = field(default_factory=dict)  # label -> value, "-" skipped
+    remarks: list[Remark] = field(default_factory=list)
+
+
+@dataclass
+class CalendarItem:
+    """An entry from the class calendar (all-day; end is inclusive)."""
+
+    uid: str
+    kind: str  # info, event, duty, own, test, quiz, trip, school, day_off
+    start: date
+    end: date
+    title: str
+    description: str | None
+
+
+@dataclass
 class StudentData:
     """Everything scraped for a single student on the account."""
 
@@ -233,6 +328,10 @@ class StudentData:
     days_off: dict[date, str] = field(default_factory=dict)
     tests: list[Test] = field(default_factory=list)
     homework: list[Homework] = field(default_factory=list)
+    absences: list[AbsenceDay] = field(default_factory=list)
+    attendance: AttendanceStats | None = None
+    behaviour: Behaviour | None = None
+    calendar: list[CalendarItem] = field(default_factory=list)
 
 
 @dataclass
@@ -285,6 +384,9 @@ class MobiDziennikClient:
         # Homework content is only available on a per-item page; cache it
         # so each assignment is fetched once.
         self._homework_content: dict[str, str | None] = {}
+        # Rarely changing pages (attendance, behaviour, calendar) are cached
+        # and re-fetched at most every SLOW_REFRESH.
+        self._slow: dict[str, tuple[float, dict]] = {}
 
     @property
     def base_url(self) -> str:
@@ -728,9 +830,319 @@ class MobiDziennikClient:
             )
         return messages
 
+
+    # ------------------------------------------------------------------
+    # Attendance ("Frekwencja")
+    # ------------------------------------------------------------------
+
+    _ABSENCE_COUNTS_RE = re.compile(
+        r"nieobecności:\s*(\d+).*?nieusprawiedliwionych:\s*(\d+).*?usprawiedliwionych:\s*(\d+)",
+        re.S,
+    )
+    _STAT_RE = re.compile(
+        r"^(obecność|nieobecność nieusprawiedliwiona|nieobecność usprawiedliwiona|spóźnienie|zwolnienie):\s*(\d+)"
+    )
+
+    async def async_get_attendance(self) -> dict[str, tuple[list[AbsenceDay], AttendanceStats]]:
+        """Return (absence days, whole-year stats) per student."""
+        return self.parse_attendance(await self._get(ATTENDANCE_PATH))
+
+    @classmethod
+    def parse_attendance(cls, html: str) -> dict[str, tuple[list[AbsenceDay], AttendanceStats]]:
+        content = BeautifulSoup(html, "lxml").find(id="content")
+        if content is None:
+            raise MobiDziennikPageError("Unexpected attendance page (no #content)")
+        result: dict[str, tuple[list[AbsenceDay], AttendanceStats]] = {}
+        for h1 in content.find_all("h1"):
+            heading = " ".join(h1.get_text(" ", strip=True).split())
+            student = _student_from_heading(heading, "nieobecności")
+            if not student:
+                continue
+            # "X - nieobecności" is the main section; extra sections such as
+            # "X - nieobecności z dziennika - <club>" only add absence days.
+            main = heading.endswith(" - nieobecności")
+            days, stats = result.setdefault(student, ([], AttendanceStats()))
+            form = h1.find_next("form")
+            if form is not None and form.find_previous("h1") is h1:
+                table = form.find("table", class_="spis")
+                rows = table.find_all("tr", recursive=False) if table else []
+                for row in rows:
+                    if "podswietl" not in (row.get("class") or []):
+                        continue
+                    tds = row.find_all("td", recursive=False)
+                    if len(tds) < 2:
+                        continue
+                    day = parse_long_date(tds[0].get_text(" ", strip=True))
+                    m = cls._ABSENCE_COUNTS_RE.search(tds[1].get_text(" ", strip=True))
+                    if day is None or m is None:
+                        continue
+                    item = AbsenceDay(day=day, total=int(m[1]), unexcused=int(m[2]), excused=int(m[3]))
+                    detail = row.find_next_sibling("tr")
+                    if detail is not None and "szczegoly_nieobecnosci" in (detail.get("class") or []):
+                        for lr in detail.find_all("tr"):
+                            cells = lr.find_all("td", recursive=False)
+                            if len(cells) < 3 or not _TIME_RANGE_RE.search(cells[0].get_text()):
+                                continue
+                            subj = cells[1].find("a") or cells[1]
+                            hint = subj.find("span")
+                            if hint is not None:
+                                hint.extract()
+                            img = lr.find("img")
+                            alt = (img.get("alt") or "").lower() if img else ""
+                            excused = None
+                            if "nieusprawiedliwiona" in alt:
+                                excused = False
+                            elif "usprawiedliwiona" in alt:
+                                excused = True
+                            item.lessons.append(
+                                AbsenceLesson(
+                                    time=_clean(cells[0].get_text(" ", strip=True)),
+                                    subject=_clean(subj.get_text(" ", strip=True)) or "?",
+                                    teacher=_clean(cells[2].get_text(" ", strip=True)),
+                                    excused=excused,
+                                )
+                            )
+                    days.append(item)
+            # Whole-year box ("CAŁY ROK") belongs to this student if no
+            # other h1 comes in between.
+            for strong in h1.find_all_next("strong") if main else []:
+                if strong.find_previous("h1") is not h1:
+                    break
+                if strong.get_text(strip=True).upper() == "CAŁY ROK":
+                    box = strong.find_parent("div")
+                    for li in box.find_all("li") if box else []:
+                        sm = cls._STAT_RE.match(li.get_text(" ", strip=True))
+                        if sm:
+                            val = int(sm[2])
+                            if sm[1] == "obecność":
+                                stats.present = val
+                            elif sm[1].endswith("nieusprawiedliwiona"):
+                                stats.unexcused = val
+                            elif sm[1].endswith("usprawiedliwiona"):
+                                stats.excused = val
+                            elif sm[1] == "spóźnienie":
+                                stats.late = val
+                            else:
+                                stats.released = val
+                    break
+        for days, _ in result.values():
+            days.sort(key=lambda d: d.day, reverse=True)
+        return result
+
+    # ------------------------------------------------------------------
+    # Behaviour ("Zachowanie")
+    # ------------------------------------------------------------------
+
+    _TERM_POINTS_RE = re.compile(
+        r"za\s+(I{1,2})\s+okres.*?suma punktów:\s*(-?\d+)\s*,\s*ocena:\s*(.+)$", re.S
+    )
+    _REMARK_POINTS_RE = re.compile(r"punktów:\s*(-?\d+)")
+    _REMARK_CATEGORY_RE = re.compile(r"\(kategoria:\s*(.+)\)\s*$")
+
+    async def async_get_behaviour(self) -> dict[str, Behaviour]:
+        """Return behaviour summary and remarks per student."""
+        return self.parse_behaviour(await self._get(BEHAVIOUR_PATH))
+
+    @classmethod
+    def parse_behaviour(cls, html: str) -> dict[str, Behaviour]:
+        content = BeautifulSoup(html, "lxml").find(id="content")
+        if content is None:
+            raise MobiDziennikPageError("Unexpected behaviour page (no #content)")
+        result: dict[str, Behaviour] = {}
+        for h1 in content.find_all("h1"):
+            heading = h1.get_text(" ", strip=True)
+            student = _student_from_heading(heading, "oceny zachowania")
+            if student:
+                beh = result.setdefault(student, Behaviour())
+                table = h1.find_next("table")
+                if table is None or table.find_previous("h1") is not h1:
+                    continue
+                terms = []
+                for th in table.find_all("th"):
+                    m = cls._TERM_POINTS_RE.search(" ".join(th.get_text(" ", strip=True).split()))
+                    if m:
+                        terms.append((m[1], int(m[2]), _clean(m[3])))
+                # Current term = the last one that already has points
+                # (term II shows 0 / "nieklasyfikowany" until it starts).
+                if terms:
+                    started = [t for t in terms if t[1] != 0]
+                    beh.term, beh.points, beh.grade = (started or terms)[-1]
+                for tr in table.find_all("tr"):
+                    tds = tr.find_all("td", recursive=False)
+                    if len(tds) == 2 and "font-weight:bold" in (tds[0].get("style") or "").replace(" ", ""):
+                        value = _clean(tds[1].get_text(" ", strip=True))
+                        if value and value != "-":
+                            beh.final_grades[_clean(tds[0].get_text(" ", strip=True)) or "?"] = value
+                continue
+            student = _student_from_heading(heading, "przegląd uwag")
+            if not student:
+                continue
+            beh = result.setdefault(student, Behaviour())
+            for div in h1.find_all_next("div", class_="uwaga"):
+                if div.find_previous("h1") is not h1:
+                    break
+                img = div.find("img")
+                alt = (img.get("alt") or "").lower() if img else ""
+                kind = "positive" if "pozytywna" in alt else "negative" if "negatywna" in alt else "neutral"
+                pts_span = div.find("span", class_="czerwony2")
+                points = None
+                if pts_span is not None:
+                    pm = cls._REMARK_POINTS_RE.search(pts_span.get_text())
+                    points = int(pm[1]) if pm else None
+                    pts_span.extract()
+                desc = div.find("div", class_="uwaga_opis")
+                desc_text = " ".join(desc.get_text(" ", strip=True).split()) if desc else ""
+                category = None
+                strong = desc.find("strong") if desc is not None else None
+                if strong is not None:
+                    cm = cls._REMARK_CATEGORY_RE.search(strong.get_text(" ", strip=True))
+                    category = _clean(cm[1]) if cm else None
+                if desc is not None:
+                    desc.extract()
+                teacher = None
+                if " przez " in desc_text:
+                    teacher = _clean(desc_text.rsplit(" przez ", 1)[1])
+                beh.remarks.append(
+                    Remark(
+                        text=_clean(div.get_text(" ", strip=True)) or "?",
+                        kind=kind,
+                        points=points,
+                        category=category,
+                        entered_at=parse_entered(desc_text),
+                        teacher=teacher,
+                    )
+                )
+        for beh in result.values():
+            beh.remarks.sort(key=lambda r: r.entered_at or datetime.min, reverse=True)
+        return result
+
+    # ------------------------------------------------------------------
+    # Class calendar ("Kalendarz klasowy")
+    # ------------------------------------------------------------------
+
+    # Event colours from the page legend -> our kind.
+    _CAL_COLOURS = {
+        "#3366cc": "info",
+        "#008928": "event",
+        "#efd459": "duty",
+        "#527f3f": "own",
+        "#ab0001": "test",
+        "#c54449": "quiz",
+        "#b66000": "trip",
+        "#590000": "school",
+        "#d6d7d9": "day_off",
+    }
+    _CAL_TYPES = {"sprawdzian": "test", "wycieczka": "trip", "dzien_wolny": "day_off"}
+
+    async def async_get_calendar(self) -> dict[str, list[CalendarItem]]:
+        """Return class-calendar entries per student."""
+        return self.parse_calendar(await self._get(CALENDAR_PATH))
+
+    @staticmethod
+    def _json_array_after(text: str, start: int) -> list | None:
+        """Parse the JSON array that starts at text[start] (bracket matching)."""
+        if start < 0 or start >= len(text) or text[start] != "[":
+            return None
+        depth, in_str, esc = 0, False, False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start : i + 1])
+                    except ValueError:
+                        return None
+        return None
+
+    @classmethod
+    def parse_calendar(cls, html: str) -> dict[str, list[CalendarItem]]:
+        soup = BeautifulSoup(html, "lxml")
+        content = soup.find(id="content")
+        if content is None:
+            raise MobiDziennikPageError("Unexpected calendar page (no #content)")
+        result: dict[str, list[CalendarItem]] = {}
+        for h1 in content.find_all("h1"):
+            small = h1.find("small")
+            if small is not None:
+                small.extract()
+            student = _student_from_heading(h1.get_text(" ", strip=True), "kalendarz klasowy")
+            if not student:
+                continue
+            box = h1.find_next("div", id=re.compile(r"^calendar\d+$"))
+            items: list[CalendarItem] = result.setdefault(student, [])
+            if box is None:
+                continue
+            marker = f"$('#{box['id']}').fullCalendar("
+            pos = html.find(marker)
+            if pos < 0:
+                continue
+            ev_pos = html.find("events:", pos)
+            if ev_pos < 0:
+                continue
+            arr_start = html.find("[", ev_pos)
+            events = cls._json_array_after(html, arr_start) or []
+            for ev in events:
+                start = _iso_date(ev.get("start"))
+                if start is None:
+                    continue
+                end = _iso_date(ev.get("end")) or start
+                ev_type = str(ev.get("id", "")).split(";")[0]
+                kind = cls._CAL_TYPES.get(ev_type) or cls._CAL_COLOURS.get(str(ev.get("color", "")).lower(), "info")
+                if ev_type == "sprawdzian" and str(ev.get("color", "")).lower() == "#c54449":
+                    kind = "quiz"
+                desc = ev.get("comment") or ""
+                desc = html_lib.unescape(re.sub(r"<br\s*/?>", "\n", desc))
+                desc = re.sub(r"<[^>]+>", "", desc).strip()
+                title = (desc.split("\n", 1)[0].strip() or str(ev.get("title") or "").strip()) if desc else str(ev.get("title") or "").strip()
+                items.append(
+                    CalendarItem(
+                        uid=str(ev.get("id") or f"{start}-{title}"),
+                        kind=kind,
+                        start=start,
+                        end=max(end, start),
+                        title=_cut_text(title, 120) or kind,
+                        description=desc or None,
+                    )
+                )
+            items.sort(key=lambda c: (c.start, c.uid))
+        return result
+
     # ------------------------------------------------------------------
     # Everything
     # ------------------------------------------------------------------
+
+    async def _slow_fetch(self, key: str, fetch) -> dict:
+        """Fetch a rarely-changing page at most every SLOW_REFRESH.
+
+        A failure keeps the previous copy (or empty on the very first try)
+        so one broken optional page never fails the whole refresh.
+        """
+        cached = self._slow.get(key)
+        if cached is not None and time.monotonic() - cached[0] < SLOW_REFRESH.total_seconds():
+            return cached[1]
+        try:
+            await self._pause()
+            data = await fetch()
+        except MobiDziennikAuthError:
+            raise
+        except MobiDziennikError as err:
+            _LOGGER.warning("Could not refresh mobiDziennik %s: %s", key, err)
+            return cached[1] if cached else {}
+        self._slow[key] = (time.monotonic(), data)
+        return data
 
     async def _pause(self) -> None:
         """Small random gap between page loads so a refresh is not a burst."""
@@ -754,6 +1166,9 @@ class MobiDziennikClient:
         homework = await self.async_get_homework()
         await self._pause()
         messages = await self.async_get_messages()
+        attendance = await self._slow_fetch("attendance", self.async_get_attendance)
+        behaviour = await self._slow_fetch("behaviour", self.async_get_behaviour)
+        calendar = await self._slow_fetch("calendar", self.async_get_calendar)
 
         names = set(grades) | set(this_week) | set(next_week)
         if not names:
@@ -772,5 +1187,9 @@ class MobiDziennikClient:
                 days_off={**off1, **off2},
                 tests=sorted(tests.get(name, []), key=lambda t: (t.day, t.time or "")),
                 homework=sorted(homework.get(name, []), key=lambda h: (h.due or date.max)),
+                absences=attendance.get(name, ([], None))[0],
+                attendance=attendance.get(name, ([], None))[1],
+                behaviour=behaviour.get(name),
+                calendar=calendar.get(name, []),
             )
         return AccountData(students=students, messages=messages)

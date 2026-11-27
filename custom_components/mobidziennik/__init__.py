@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from .const import CONF_SCHOOL_ID, DOMAIN
 from .coordinator import MobiDziennikCoordinator, build_client
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.CALENDAR, Platform.SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
