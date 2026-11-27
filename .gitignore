@@ -4,3 +4,5 @@ __pycache__/
 venv/
 *.html
 .DS_Store
+# real pages may contain personal data; only the anonymised test fixtures are tracked
+!tests/fixtures/*.html

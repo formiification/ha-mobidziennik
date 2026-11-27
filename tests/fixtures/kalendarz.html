@@ -1,0 +1,10 @@
+<html><head></head><body><div id="content">
+<h1>Kowalska Ala - kalendarz klasowy <small>(2 a)</small></h1><div id="calendar16"></div>
+<h1>Kowalski Jan - kalendarz klasowy <small>(6 a)</small></h1><div id="calendar146"></div>
+</div>
+<script>
+$('#calendar16').fullCalendar({ titleFormat: { month: 'MMMM yyyy' }, events: [{"title":"Kartkówka","start":"2026-12-03","id":"sprawdzian;16;46","color":"#c54449","textColor":"#fff","comment":"Dzielenie w zakresie 30."},{"title":"Wróżby...","start":"2026-11-30","id":"kalendarz;16;47","color":"#008928","textColor":"#fff","comment":"Wróżby andrzejkowe<br />Chętni uczniowie [przebrani]."},{"title":"Ferie","start":"2027-01-18","end":"2027-01-31","id":"dzien_wolny;16;","color":"#d6d7d9","textColor":"#000","comment":"Ferie zimowe"}],
+  eventClick: function(event) {}
+});
+$('#calendar146').fullCalendar({ events: [{"title":"Sprawdzian","start":"2026-11-30","id":"sprawdzian;146;9","color":"#ab0001","textColor":"#fff","comment":"Sprawdzian wiadomości &quot;Rzeczpospolita&quot;"},{"title":"Wycieczka","start":"2026-12-10","id":"wycieczka;146;3","color":"#b66000","textColor":"#fff","comment":"Wyjazd do kina"}] });
+</script></body></html>
