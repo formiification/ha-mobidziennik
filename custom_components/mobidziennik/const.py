@@ -27,5 +27,14 @@ LOGIN_FAILURE_MARKERS = (
     "Podano niepoprawny login i/lub hasło",
 )
 
+# mobiDziennik allows ONE session per account: a login from another
+# browser/device (or another HA instance) ends ours and redirects every
+# request to this page, which has none of the markers above.
+AUTO_LOGOUT_PATH = "/helper/autowylogowanie"
+AUTO_LOGOUT_MARKERS = (
+    "auto wylogowanie",
+    "autowylogowanie",
+)
+
 # How many days back the "recent grades" sensor looks.
 RECENT_GRADES_DAYS = 7

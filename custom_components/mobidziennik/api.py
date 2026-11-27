@@ -25,6 +25,8 @@ import aiohttp
 from bs4 import BeautifulSoup, Tag
 
 from .const import (
+    AUTO_LOGOUT_MARKERS,
+    AUTO_LOGOUT_PATH,
     BASE_URL_TEMPLATE,
     GRADES_PATH,
     HOMEWORK_DETAIL_PATH,
@@ -142,6 +144,14 @@ class MobiDziennikError(Exception):
 
 class MobiDziennikAuthError(MobiDziennikError):
     """Raised when login fails or the session has expired."""
+
+
+class MobiDziennikPageError(MobiDziennikError):
+    """Raised when a page does not have the expected layout.
+
+    Raising (instead of returning empty data) makes the coordinator keep
+    the last good snapshot rather than blanking every sensor.
+    """
 
 
 @dataclass
@@ -288,27 +298,49 @@ class MobiDziennikClient:
     def _is_login_page(html: str) -> bool:
         return any(marker in html for marker in LOGIN_FAILURE_MARKERS)
 
-    async def _fetch(self, path: str) -> str:
+    @staticmethod
+    def _is_auto_logout(html: str, url: str = "") -> bool:
+        """True for the "logged in from another device" page."""
+        if AUTO_LOGOUT_PATH in url:
+            return True
+        lowered = html.lower()
+        return any(marker in lowered for marker in AUTO_LOGOUT_MARKERS)
+
+    def _session_lost(self, html: str, url: str) -> bool:
+        return self._is_login_page(html) or self._is_auto_logout(html, url)
+
+    async def _fetch(self, path: str) -> tuple[str, str]:
+        """GET a page and return (final URL, HTML)."""
         if "zmien_status" in path:
             raise MobiDziennikError("Refusing to call a state-changing URL")
         url = f"{self._base_url}{path}"
         try:
             async with self._session.get(url) as resp:
                 resp.raise_for_status()
-                return await resp.text()
+                return str(resp.url), await resp.text()
         except aiohttp.ClientError as err:
             raise MobiDziennikError(f"GET {path} failed: {err}") from err
 
     async def _get(self, path: str) -> str:
-        """GET a page, logging in (again) if the session has expired."""
+        """GET a page, logging in (again) if the session has been lost.
+
+        The session is lost either when it expires (login page) or when
+        someone logs in to the same account elsewhere (auto-logout page).
+        """
         await self._ensure_logged_in()
-        html = await self._fetch(path)
-        if self._is_login_page(html):
-            _LOGGER.debug("Session expired, logging in again")
+        url, html = await self._fetch(path)
+        if self._session_lost(html, url):
+            if self._is_auto_logout(html, url):
+                _LOGGER.info(
+                    "mobiDziennik ended the session because the account was used "
+                    "on another device; logging in again"
+                )
+            else:
+                _LOGGER.debug("Session expired, logging in again")
             self._logged_in = False
             await self.async_login()
-            html = await self._fetch(path)
-            if self._is_login_page(html):
+            url, html = await self._fetch(path)
+            if self._session_lost(html, url):
                 raise MobiDziennikAuthError("Still not logged in after re-login")
         return html
 
@@ -327,6 +359,9 @@ class MobiDziennikClient:
             raise MobiDziennikAuthError(
                 "mobiDziennik rejected the login - check the credentials."
             )
+        if self._is_auto_logout(html, str(resp.url)):
+            self._logged_in = False
+            raise MobiDziennikError("Session was taken over right after login; will retry")
         self._logged_in = True
 
     async def _ensure_logged_in(self) -> None:
@@ -357,7 +392,7 @@ class MobiDziennikClient:
         content = soup.find(id="content")
         result: dict[str, tuple[list[Grade], dict[str, float]]] = {}
         if content is None:
-            return result
+            raise MobiDziennikPageError("Unexpected page layout (no #content)")
 
         for heading in content.find_all("h1"):
             match = self._GRADE_HEADING_RE.match(heading.get_text(" ", strip=True))
@@ -456,7 +491,7 @@ class MobiDziennikClient:
         content = soup.find(id="content")
         result: dict[str, tuple[list[Lesson], dict[date, str]]] = {}
         if content is None:
-            return result
+            raise MobiDziennikPageError("Unexpected page layout (no #content)")
 
         for block in content.find_all("div", class_="plany-cnt"):
             heading = block.find(["h1", "h2"])
@@ -558,7 +593,7 @@ class MobiDziennikClient:
         content = soup.find(id="content")
         result: dict[str, list[Test]] = {}
         if content is None:
-            return result
+            raise MobiDziennikPageError("Unexpected page layout (no #content)")
         student: str | None = None
         for row in content.find_all("tr"):
             h1 = row.find("h1")
@@ -608,7 +643,7 @@ class MobiDziennikClient:
         content = soup.find(id="content")
         result: dict[str, list[Homework]] = {}
         if content is None:
-            return result
+            raise MobiDziennikPageError("Unexpected page layout (no #content)")
         for h1 in content.find_all("h1"):
             student = _student_from_heading(h1.get_text(" ", strip=True), "najbliższe zadania domowe")
             if not student:
@@ -721,6 +756,9 @@ class MobiDziennikClient:
         messages = await self.async_get_messages()
 
         names = set(grades) | set(this_week) | set(next_week)
+        if not names:
+            # Never replace a good snapshot with an empty one.
+            raise MobiDziennikPageError("No students found on any page")
         students: dict[str, StudentData] = {}
         for name in sorted(names):
             g, avg = grades.get(name, ([], {}))
